@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <cstring>
 #include <list>
 #include <map>
 
@@ -17,10 +18,6 @@ using namespace std;
 void tls_init();
 
 void tls_handle_page_fault(int sig, siginfo_t *si, void *context);
-
-void tls_protect(struct page *p);
-
-void tls_unprotect(struct page *p);
 
 int tls_create(unsigned int size);
 
@@ -42,7 +39,7 @@ struct TLSBLOCK
 
 struct page
 {
-    unsigned int address; /* Start address of page */
+    unsigned long address; /* Start address of page */
     int ref_count;        /* Counter for shared pages */
 };
 
