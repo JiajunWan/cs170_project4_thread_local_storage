@@ -4,10 +4,9 @@ using namespace std;
 
 void tls_init()
 {
-    struct sigaction sigact;
-
     PAGESIZE = getpagesize();
 
+    struct sigaction sigact;
     sigemptyset(&sigact.sa_mask);
 
     /* SA_SIGINFO will help to distinguish between page fault and normal SegFault */
@@ -128,11 +127,42 @@ int tls_read(unsigned int offset, unsigned int length, char *buffer)
 
 int tls_destroy()
 {
-    /*  1. Error handling:
-            a. check whether current thread has local storage for destroying
-        2. Clean up all pages
-        3. Clean up TLS
-        4. Remove the mapping from hash_table */
+    pthread_t tid = pthread_self();
+
+    /* Error handling: Check whether current thread has local storage for destroying */
+    auto iter = hash_table.find(tid);
+    if (iter == TLSPOOL.end)
+    {
+        return -1;
+    }
+
+    auto it1 = next(TLSPOOL.begin(), iter->second);
+
+    /* Clean up all pages */
+    for (int i = 0; i < it1->page_num; i++)
+    {
+        /* If the page is not shared by other threads */
+        if (it1->pages[i]->ref_count == 1)
+        {
+            munmap((void *)it1->pages[i]->address, PAGESIZE);
+            free(it1->pages[i]);
+        }
+        /* If the page is shared by other threads */
+        else
+        {
+            /* Decrement the reference counter by one */
+            it1->pages[i]->ref_count--;
+        }
+    }
+
+    /* Clean up TLS */
+    free(it1->pages);
+    TLSPOOL.erase(it1);
+
+    /* Remove the mapping from hash_table */
+    hash_table.erase(iter);
+
+    return 0;
 }
 
 int tls_clone(pthread_t tid)
