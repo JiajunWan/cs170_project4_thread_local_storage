@@ -5,9 +5,22 @@
 #include <stdio.h>
 #include <iostream>
 #include <algorithm>
+#include <unistd.h>
+#include <sys/mman.h>
 #include <list>
+#include <map>
 
 using namespace std;
+
+#define MAX_TLS 129
+
+void tls_init();
+
+void tls_handle_page_fault(int sig, siginfo_t *si, void *context);
+
+void tls_protect(struct page *p);
+
+void tls_unprotect(struct page *p);
 
 int tls_create(unsigned int size);
 
@@ -21,11 +34,22 @@ int tls_clone(pthread_t tid);
 
 struct TLSBLOCK
 {
-    pthread_t ThreadID;
-    int *TLS = NULL;
-    int ListIndex = -1;
+    pthread_t tid = 0;
+    unsigned int size = 0;     /* Size in bytes */
+    unsigned int page_num = 0; /* Number of pages */
+    struct page **pages;   /* Array of pointers to pages */
 };
+
+struct page
+{
+    unsigned int address; /* Start address of page */
+    int ref_count;        /* Counter for shared pages */
+};
+
+map<pthread_t, int> hash_table;
 
 static list<TLSBLOCK> TLSPOOL;
 
 static int Initialized = 0;
+
+static int PAGESIZE = 0;
