@@ -81,7 +81,7 @@ static int test2(void){
 
     tls_create(8192);
     tls_write(0, 4, in_buf);
-    tls_read(0, 16, out_buf);
+    tls_read(0, 4, out_buf);
 
     for(int i = 0; i < 4; i++){
         if(out_buf[i] != 1){

@@ -29,18 +29,20 @@ int tls_destroy();
 
 int tls_clone(pthread_t tid);
 
+void* tls_get_internal_start_address();
+
 struct TLSBLOCK
 {
     pthread_t tid = 0;
     unsigned int size = 0;     /* Size in bytes */
     unsigned int page_num = 0; /* Number of pages */
-    struct page **pages;   /* Array of pointers to pages */
+    struct page **pages;       /* Array of pointers to pages */
 };
 
 struct page
 {
     unsigned long address; /* Start address of page */
-    int ref_count;        /* Counter for shared pages */
+    int ref_count;         /* Counter for shared pages */
 };
 
 map<pthread_t, int> hash_table;

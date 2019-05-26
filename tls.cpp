@@ -85,7 +85,7 @@ int tls_create(unsigned int size)
     /* Add this TLS to the TLSPOOL */
     TLSPOOL.push_back(tls);
 
-    /* Add this threadid and TLS mapping to flobal hash_table */
+    /* Add the threadID and TLSPOOL Index mapping to hash_table */
     hash_table[tid] = TLSPOOL.size() - 1;
 
     return 0;
@@ -95,7 +95,7 @@ int tls_write(unsigned int offset, unsigned int length, char *buffer)
 {
     pthread_t tid = pthread_self();
 
-    /* Check whether current thread already has local storage */
+    /* Check if the current thread already has local storage */
     auto iter = hash_table.find(tid);
     if (iter == hash_table.end())
     {
@@ -103,20 +103,19 @@ int tls_write(unsigned int offset, unsigned int length, char *buffer)
     }
     auto tls_iter = next(TLSPOOL.begin(), iter->second);
 
-    /* Check if offset+length > size */
+    /* Check if offset + length > size */
     if (offset + length > tls_iter->size)
     {
         return -1;
     }
 
-    /* Unprotect all pages belong to thread's TLS */
+    /* Unprotect all pages belong to the thread's TLS */
     for (int i = 0; i < tls_iter->page_num; i++)
     {
         mprotect((void *)tls_iter->pages[i]->address, PAGESIZE, PROT_READ | PROT_WRITE);
-        // tls_unprotect(tls_iter->pages[i]);
     }
 
-    /* perform the write operation */
+    /* Perform the write operation */
     for (int i = 0, index = offset; index < (offset + length); i++, index++)
     {
         struct page *p;
@@ -144,6 +143,7 @@ int tls_write(unsigned int offset, unsigned int length, char *buffer)
             mprotect((void *)p->address, PAGESIZE, PROT_READ | PROT_WRITE);
         }
 
+        /* Copy single char from buffer for page address with page offset */
         char *dst = ((char *)p->address) + poff;
         *dst = buffer[i];
     }
@@ -161,7 +161,7 @@ int tls_read(unsigned int offset, unsigned int length, char *buffer)
 {
     pthread_t tid = pthread_self();
 
-    /* Check whether current thread already has local storage */
+    /* Check if the current thread already has local storage */
     auto iter = hash_table.find(tid);
     if (iter == hash_table.end())
     {
@@ -169,7 +169,7 @@ int tls_read(unsigned int offset, unsigned int length, char *buffer)
     }
     auto tls_iter = next(TLSPOOL.begin(), iter->second);
 
-    /* Check if offset+length > size */
+    /* Check if offset + length > size */
     if (offset + length > tls_iter->size)
     {
         return -1;
@@ -206,7 +206,7 @@ int tls_destroy()
 {
     pthread_t tid = pthread_self();
 
-    /* Check whether current thread has local storage for destroying */
+    /* Check if the current thread has local storage for destroying */
     auto iter = hash_table.find(tid);
     if (iter == hash_table.end())
     {
@@ -232,13 +232,20 @@ int tls_destroy()
     }
 
     /* Update the index in the hash_table for elements after tls_iter in the list  */
-    auto update_iter = next(TLSPOOL.begin(), iter->second);
-    update_iter++;
-    for (update_iter; update_iter != TLSPOOL.end(); ++update_iter)
+    // auto update_iter = next(TLSPOOL.begin(), iter->second);
+    // update_iter++;
+    // for (update_iter; update_iter != TLSPOOL.end(); ++update_iter)
+    // {
+    //     auto hash_iter = hash_table.find(update_iter->tid);
+    //     hash_iter->second--;
+    // }
+
+    for_each(next(TLSPOOL.begin(), iter->second + 1), TLSPOOL.end(), [](TLSBLOCK tls)
     {
-        auto hash_iter = hash_table.find(update_iter->tid);
-        hash_iter->second--;
-    }
+        hash_table[tls.tid]--;
+        // auto hash_iter = hash_table.find(tls.tid);
+        // hash_iter->second--;
+    });
 
     /* Clean up TLS */
     free(tls_iter->pages);
@@ -254,14 +261,14 @@ int tls_clone(pthread_t tid)
 {
     pthread_t tid_self = pthread_self();
 
-    /* Check whether current thread has local storage */
+    /* Check if the current thread has local storage */
     auto iter2 = hash_table.find(tid_self);
     if (iter2 != hash_table.end())
     {
         return -1;
     }
 
-    /* Check whether target thread has local storage */
+    /* Check if the target thread has local storage */
     auto iter = hash_table.find(tid);
     if (iter == hash_table.end())
     {
@@ -286,8 +293,24 @@ int tls_clone(pthread_t tid)
     /* Add this TLS to the TLSPOOL */
     TLSPOOL.push_back(tls);
 
-    /* Add this threadid and TLS mapping to flobal hash_table */
+    /* Add the threadID and TLSPOOL Index mapping to the hash_table */
     hash_table[tid_self] = TLSPOOL.size() - 1;
 
     return 0;
+}
+
+void* tls_get_internal_start_address()
+{
+    pthread_t tid_self = pthread_self();
+
+    /* Check if the current thread has local storage */
+    auto iter = hash_table.find(tid_self);
+    if (iter == hash_table.end())
+    {
+        /* If the current thread did not allocate any local storage area, the function should return NULL */
+        return NULL;
+    }
+
+    /* Returns a pointer to the starting address of the local storage area for the current thread */
+    return (void *)next(TLSPOOL.begin(), iter->second)->pages[0]->address;
 }
