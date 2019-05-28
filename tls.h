@@ -52,3 +52,5 @@ static list<TLSBLOCK> TLSPOOL;
 static int Initialized = 0;
 
 static int PAGESIZE = 0;
+
+sem_t mutex_sem;
