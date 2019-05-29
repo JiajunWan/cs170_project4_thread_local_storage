@@ -6,9 +6,7 @@ void tls_init()
 {
     sem_init(&mutex_sem, 0, 1);
     sem_wait(&mutex_sem);
-
     PAGESIZE = getpagesize();
-
     sem_post(&mutex_sem);
 
     struct sigaction sigact;
@@ -27,7 +25,9 @@ void tls_init()
 
 void tls_handle_page_fault(int sig, siginfo_t *si, void *context)
 {
+    sem_wait(&mutex_sem);
     unsigned long p_fault = ((unsigned long)si->si_addr) & ~(PAGESIZE - 1);
+    sem_post(&mutex_sem);
 
     sem_wait(&mutex_sem);
     /* Check whether it is a "real" segfault or because a thread has touched forbidden memory */
@@ -78,6 +78,7 @@ int tls_create(unsigned int size)
     }
     sem_post(&mutex_sem);
 
+    sem_wait(&mutex_sem);
     /* Allocate TLS */
     struct TLSBLOCK tls;
     tls.tid = tid;
@@ -94,6 +95,7 @@ int tls_create(unsigned int size)
         p->ref_count = 1;
         tls.pages[i] = p;
     }
+    sem_post(&mutex_sem);
 
     sem_wait(&mutex_sem);
     /* Add this TLS to the TLSPOOL */
@@ -111,7 +113,6 @@ int tls_write(unsigned int offset, unsigned int length, char *buffer)
     pthread_t tid = pthread_self();
 
     sem_wait(&mutex_sem);
-
     /* Check if the current thread already has local storage */
     auto iter = hash_table.find(tid);
     if (iter == hash_table.end())
@@ -128,6 +129,7 @@ int tls_write(unsigned int offset, unsigned int length, char *buffer)
         return -1;
     }
 
+    sem_wait(&mutex_sem);
     /* Unprotect all pages belong to the thread's TLS */
     for (int i = 0; i < tls_iter->page_num; i++)
     {
@@ -147,19 +149,19 @@ int tls_write(unsigned int offset, unsigned int length, char *buffer)
         {
             struct page *copy;
 
-            /* Create a private copy (COW) */
+            /* Copy on write */
             copy = (struct page *)calloc(1, sizeof(struct page));
-            copy->address = (unsigned long)mmap(NULL, PAGESIZE, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+            copy->address = (unsigned long)mmap(NULL, PAGESIZE, PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
             copy->ref_count = 1;
+
+            /* Copy the entire page content */
+            memcpy((void *)copy->address, (void *)p->address, PAGESIZE);
             tls_iter->pages[page_num] = copy;
 
             /* Update original page */
             p->ref_count--;
             mprotect((void *)p->address, PAGESIZE, 0);
             p = copy;
-
-            /* Unprotect the newly allocated mmap page */
-            mprotect((void *)p->address, PAGESIZE, PROT_READ | PROT_WRITE);
         }
 
         /* Copy single char from buffer for page address with page offset */
@@ -172,6 +174,7 @@ int tls_write(unsigned int offset, unsigned int length, char *buffer)
     {
         mprotect((void *)tls_iter->pages[i]->address, PAGESIZE, 0);
     }
+    sem_post(&mutex_sem);
 
     return 0;
 }
@@ -181,7 +184,6 @@ int tls_read(unsigned int offset, unsigned int length, char *buffer)
     pthread_t tid = pthread_self();
 
     sem_wait(&mutex_sem);
-
     /* Check if the current thread already has local storage */
     auto iter = hash_table.find(tid);
     if (iter == hash_table.end())
@@ -198,6 +200,7 @@ int tls_read(unsigned int offset, unsigned int length, char *buffer)
         return -1;
     }
 
+    sem_wait(&mutex_sem);
     /* Unprotect all pages belong to thread's TLS */
     for (int i = 0; i < tls_iter->page_num; i++)
     {
@@ -221,6 +224,7 @@ int tls_read(unsigned int offset, unsigned int length, char *buffer)
     {
         mprotect((void *)tls_iter->pages[i]->address, PAGESIZE, 0);
     }
+    sem_post(&mutex_sem);
 
     return 0;
 }
@@ -230,7 +234,6 @@ int tls_destroy()
     pthread_t tid = pthread_self();
 
     sem_wait(&mutex_sem);
-
     /* Check if the current thread has local storage for destroying */
     auto iter = hash_table.find(tid);
     if (iter == hash_table.end())
@@ -241,6 +244,7 @@ int tls_destroy()
     auto tls_iter = next(TLSPOOL.begin(), iter->second);
     sem_post(&mutex_sem);
 
+    sem_wait(&mutex_sem);
     /* Clean up all pages */
     for (int i = 0; i < tls_iter->page_num; i++)
     {
@@ -257,6 +261,7 @@ int tls_destroy()
             tls_iter->pages[i]->ref_count--;
         }
     }
+    sem_post(&mutex_sem);
 
     sem_wait(&mutex_sem);
     /* Update the index in the hash_table for elements after tls_iter in the list  */
@@ -278,7 +283,6 @@ int tls_clone(pthread_t tid)
     pthread_t tid_self = pthread_self();
 
     sem_wait(&mutex_sem);
-
     /* Check if the current thread has local storage */
     auto iter = hash_table.find(tid_self);
     if (iter != hash_table.end())
@@ -327,17 +331,16 @@ void *tls_get_internal_start_address()
     pthread_t tid_self = pthread_self();
 
     sem_wait(&mutex_sem);
-
     /* Check if the current thread has local storage */
     auto iter = hash_table.find(tid_self);
     if (iter == hash_table.end())
     {
-        /* If the current thread did not allocate any local storage area, the function should return NULL */
         sem_post(&mutex_sem);
+        /* If the current thread did not allocate any local storage area, the function should return NULL */
         return NULL;
     }
+    sem_post(&mutex_sem);
 
     /* Returns a pointer to the starting address of the local storage area for the current thread */
-    sem_post(&mutex_sem);
     return (void *)next(TLSPOOL.begin(), iter->second)->pages[0]->address;
 }
